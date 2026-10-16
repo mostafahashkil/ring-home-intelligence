@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Sign in" };
 
 export default async function LoginPage() {
-  if (countUsers() === 0) redirect("/setup");
+  if ((await countUsers()) === 0) redirect("/setup");
   if (await getCurrentUser()) redirect("/");
   return (
     <AuthCard title="Sign in" subtitle="Use your Home Intelligence account (not your Ring account).">

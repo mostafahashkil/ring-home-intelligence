@@ -20,9 +20,9 @@ const MODE_LABELS = {
 
 export default async function HouseholdPage() {
   const user = await requireAppUser();
-  const settings = getSettings();
-  const profiles = listProfiles({ includeDemo: !settings.hideDemoData });
-  const cameras = listCameras();
+  const settings = await getSettings();
+  const profiles = await listProfiles({ includeDemo: !settings.hideDemoData });
+  const cameras = await listCameras();
   const editable = can(user.role, "household:manage");
 
   return (

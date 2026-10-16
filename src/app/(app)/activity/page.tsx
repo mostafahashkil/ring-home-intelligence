@@ -30,11 +30,11 @@ function dayStart(value: string, tz: string): number | undefined {
 export default async function ActivityPage({ searchParams }: { searchParams: Promise<SP> }) {
   await requireAppUser();
   const sp = await searchParams;
-  const settings = getSettings();
+  const settings = await getSettings();
   const tz = settings.timezone;
-  const categories = supportedCategories();
-  const cameras = listCameras();
-  const profiles = listProfiles();
+  const categories = await supportedCategories();
+  const cameras = await listCameras();
+  const profiles = await listProfiles();
   const camName = new Map(cameras.map((c) => [c.id, c.name]));
 
   const category = one(sp, "category") as EventCategory | "";
@@ -49,7 +49,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
 
   const from = dayStart(fromStr, tz);
   const toStart = dayStart(toStr, tz);
-  const { events, total } = listEvents({
+  const { events, total } = await listEvents({
     categories: category && categories.includes(category) ? [category] : undefined,
     severities: severity && SEVERITIES.includes(severity) ? [severity] : undefined,
     cameraId: cameraId || undefined,

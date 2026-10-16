@@ -16,9 +16,10 @@ export const dynamic = "force-dynamic";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
   await ensureInitialized();
-  const settings = getSettings();
+  const settings = await getSettings();
   const providers = getProviders();
-  const ring = providers.find((p) => p.id === "ring")!.connection();
+  const ring = await providers.find((p) => p.id === "ring")!.connection();
+  const unread = await countUnread(!settings.hideDemoData);
 
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[248px_1fr]">
@@ -55,7 +56,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             )}
           </div>
           <ThemeMenu />
-          <NotificationBell initialUnread={countUnread(!settings.hideDemoData)} />
+          <NotificationBell initialUnread={unread} />
           <form action={signOut} className="lg:hidden">
             <button className="btn-ghost" type="submit" aria-label="Sign out">
               <LogOut aria-hidden className="h-5 w-5" />

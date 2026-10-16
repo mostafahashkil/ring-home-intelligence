@@ -39,13 +39,16 @@ export async function POST(req: NextRequest) {
   const parsed = parseRingWebhook(body);
   if (!parsed) return NextResponse.json({ error: "Unrecognized payload" }, { status: 400 });
 
-  const db = getDb();
-  const fresh = db.prepare("INSERT OR IGNORE INTO webhook_receipts (request_id, received_at) VALUES (?, ?)").run(parsed.requestId, Date.now());
+  const db = await getDb();
+  const fresh = await db.run("INSERT INTO webhook_receipts (request_id, received_at) VALUES (?, ?) ON CONFLICT DO NOTHING", [
+    parsed.requestId,
+    Date.now(),
+  ]);
   if (fresh.changes === 0) return NextResponse.json({ status: "already_processed" });
 
   try {
     await ensureInitialized();
-    const linkedAccount = loadCredentials()?.accountId;
+    const linkedAccount = (await loadCredentials())?.accountId;
     if (parsed.kind !== "ignored" && linkedAccount && parsed.accountId && parsed.accountId !== linkedAccount) {
       log.warn("ring.webhook.account_mismatch");
       return NextResponse.json({ status: "ignored" });
@@ -55,13 +58,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: r.status });
     }
     if (parsed.kind === "integration") {
-      audit("ring", `integration.${parsed.type}`);
-      if (parsed.type === "app_integration_removed") markExpired();
+      await audit("ring", `integration.${parsed.type}`);
+      if (parsed.type === "app_integration_removed") await markExpired();
     }
     return NextResponse.json({ status: "ok" });
   } catch (err) {
     // Release the receipt so Ring's retry can be processed.
-    db.prepare("DELETE FROM webhook_receipts WHERE request_id = ?").run(parsed.requestId);
+    await db.run("DELETE FROM webhook_receipts WHERE request_id = ?", [parsed.requestId]);
     log.error("ring.webhook.failed", { err: err as Error });
     return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }

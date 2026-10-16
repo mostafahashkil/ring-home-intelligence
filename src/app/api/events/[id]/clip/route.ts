@@ -26,7 +26,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: err instanceof ForbiddenError ? err.message : "Sign in required." }, { status: 401 });
   }
   const { id } = await params;
-  const event = getEvent(id);
+  const event = await getEvent(id);
   if (!event) return NextResponse.json({ error: "Event not found." }, { status: 404 });
   const ev = event.evidenceReference;
   if (!ev || ev.kind !== "ring_recording") {
@@ -41,7 +41,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
   try {
     const res = await createRingClient().downloadVideo(ev.deviceId, { timestamp: ev.timestamp, duration: ev.durationMs, componentId: ev.componentId });
-    audit(userId, "clip.viewed", event.id);
+    await audit(userId, "clip.viewed", event.id);
     return new Response(res.body, {
       status: 200,
       headers: {

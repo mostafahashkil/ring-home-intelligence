@@ -1,8 +1,23 @@
-import { openDb, setDbForTesting } from "@/lib/db";
+import { Db, openDb, setDbForTesting } from "@/lib/db";
 import { DEFAULT_SETTINGS, NormalizedEvent, Profile, Rule } from "@/lib/domain/types";
 
-export function freshDb() {
-  const db = openDb(":memory:");
+let postgres: Db | undefined;
+
+/**
+ * In-memory SQLite by default. Set TEST_DATABASE_URL to run the suite against Postgres instead
+ * (use --no-file-parallelism: all files share that database).
+ */
+export async function freshDb() {
+  if (process.env.TEST_DATABASE_URL) {
+    process.env.NETLIFY_DB_URL = process.env.TEST_DATABASE_URL;
+    postgres ??= await openDb();
+    await postgres.exec(
+      "TRUNCATE users, sessions, settings, app_meta, cameras, profiles, events, rules, notifications, audit_log, ring_credentials, oauth_states, webhook_receipts, login_attempts RESTART IDENTITY CASCADE",
+    );
+    setDbForTesting(postgres);
+    return postgres;
+  }
+  const db = await openDb(":memory:");
   setDbForTesting(db);
   return db;
 }

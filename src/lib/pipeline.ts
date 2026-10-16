@@ -3,7 +3,7 @@
  * rules decision → storage + notification + audit → behavior detection (derived events).
  * Every provider (demo, Ring webhook, Ring history sync) goes through this one path.
  */
-import { getDb } from "./db";
+import { transaction } from "./db";
 import {
   CATEGORY_LABELS,
   EventCategory,
@@ -61,41 +61,41 @@ export async function ingest(raw: unknown, opts: { now?: number } = {}): Promise
   const input = parsed.data;
   if (input.demo !== (input.provider === "demo")) return { status: "invalid", error: "Demo flag mismatch." };
 
-  const existing = findByProviderEventId(input.provider, input.providerEventId);
+  const existing = await findByProviderEventId(input.provider, input.providerEventId);
   if (existing) return { status: "duplicate", event: existing };
 
-  const camera = resolveCamera(input);
-  if (input.kind === "device_offline") setCameraStatus(camera.id, "offline");
-  if (input.kind === "device_online") setCameraStatus(camera.id, "online");
-  if (input.kind === "device_removed") setCameraStatus(camera.id, "removed");
+  const camera = await resolveCamera(input);
+  if (input.kind === "device_offline") await setCameraStatus(camera.id, "offline");
+  if (input.kind === "device_online") await setCameraStatus(camera.id, "online");
+  if (input.kind === "device_removed") await setCameraStatus(camera.id, "removed");
 
   let event = normalize(input, { cameraId: camera.id, cameraName: camera.name, zone: camera.zone, now });
 
   // Webhook + history describe the same real event with different ids: merge instead of duplicating.
   if (input.provider === "ring" && MERGEABLE[event.eventType]) {
-    const near = findNearDuplicate("ring", camera.id, MERGEABLE[event.eventType]!, event.timestamp, MERGE_TOLERANCE_MS);
+    const near = await findNearDuplicate("ring", camera.id, MERGEABLE[event.eventType]!, event.timestamp, MERGE_TOLERANCE_MS);
     if (near) {
       const merged = mergeInto(near, event);
-      updateEvent(merged);
+      await updateEvent(merged);
       return { status: "merged", event: merged };
     }
   }
 
-  const settings = getSettings();
-  const profiles = listProfiles();
+  const settings = await getSettings();
+  const profiles = await listProfiles();
 
   if (input.demo && input.demoDetails?.profileName) {
     const profile = profiles.find((p) => p.demo && p.displayName === input.demoDetails!.profileName);
     event = applySimulatedMatch(event, profile, input.demoDetails.matchConfidence ?? 0, reviewThresholdFor(profile, settings));
   }
 
-  const stored = decideAndStore(event, now);
+  const stored = await decideAndStore(event, now);
   const derived = await runBehavior(stored, now);
   return { status: "created", event: stored, derived };
 }
 
-function resolveCamera(input: ProviderEventInput) {
-  const found = findCameraByDevice(input.provider, input.providerDeviceId);
+async function resolveCamera(input: ProviderEventInput) {
+  const found = await findCameraByDevice(input.provider, input.providerDeviceId);
   if (found) return found;
   return upsertCamera({
     provider: input.provider,
@@ -123,18 +123,18 @@ function mergeInto(existing: NormalizedEvent, incoming: NormalizedEvent): Normal
 }
 
 /** Evaluate rules, then persist the event, its notification record and audit entries atomically. */
-export function decideAndStore(event: NormalizedEvent, now: number): NormalizedEvent {
-  const settings = getSettings();
-  const profiles = listProfiles();
-  const rules = listRules();
-  const cameras = new Map(listCameras().map((c) => [c.id, c]));
+export async function decideAndStore(event: NormalizedEvent, now: number): Promise<NormalizedEvent> {
+  const settings = await getSettings();
+  const profiles = await listProfiles();
+  const rules = await listRules();
+  const cameras = new Map((await listCameras()).map((c) => [c.id, c]));
   const lookback = Math.max(settings.dedupWindowMinutes, settings.cooldown.windowMinutes) * 60_000;
   const decision = evaluate({
     event,
     rules,
     profiles,
     settings,
-    recent: recentNotifications(now - lookback),
+    recent: await recentNotifications(now - lookback),
     now,
     cameraName: (id) => cameras.get(id)?.name ?? "camera",
   });
@@ -147,10 +147,10 @@ export function decideAndStore(event: NormalizedEvent, now: number): NormalizedE
   const cameraName = (final.cameraId && cameras.get(final.cameraId)?.name) || "Unknown camera";
   const copy = composeNotification(final, decision, profile, cameraName, settings.timezone);
 
-  getDb().transaction(() => {
-    insertEvent(final);
+  await transaction(async () => {
+    await insertEvent(final);
     if (decision.channel !== "none") {
-      insertNotification({
+      await insertNotification({
         eventId: final.id,
         ruleId: decision.ruleId,
         channel: decision.channel,
@@ -165,7 +165,7 @@ export function decideAndStore(event: NormalizedEvent, now: number): NormalizedE
       });
     }
     if (decision.channel === "push" || decision.requiresConfirmation || decision.saveClip) {
-      audit("system", "automation.triggered", final.id, {
+      await audit("system", "automation.triggered", final.id, {
         channel: decision.channel,
         ruleId: decision.ruleId,
         category: CATEGORY_LABELS[final.eventType],
@@ -173,16 +173,16 @@ export function decideAndStore(event: NormalizedEvent, now: number): NormalizedE
         demo: final.demo,
       });
     }
-  })();
+  });
   return final;
 }
 
 async function runBehavior(event: NormalizedEvent, now: number): Promise<NormalizedEvent[]> {
   if (!event.cameraId) return [];
-  const settings = getSettings();
+  const settings = await getSettings();
   const since = event.timestamp - settings.behavior.repeatVisitsWindowMinutes * 60_000;
-  const recent = recentEventsAtCamera(event.cameraId, since, ["visitor", "doorbell", "behavior"]);
-  const cameraName = getCamera(event.cameraId)?.name ?? "camera";
+  const recent = await recentEventsAtCamera(event.cameraId, since, ["visitor", "doorbell", "behavior"]);
+  const cameraName = (await getCamera(event.cameraId))?.name ?? "camera";
   const findings = detectBehavior(event, recent, settings, cameraName);
   const out: NormalizedEvent[] = [];
   for (const f of findings) {
@@ -206,7 +206,7 @@ async function runBehavior(event: NormalizedEvent, now: number): Promise<Normali
       derivedFrom: [event.id],
       createdAt: now,
     };
-    out.push(decideAndStore(derived, now));
+    out.push(await decideAndStore(derived, now));
   }
   return out;
 }

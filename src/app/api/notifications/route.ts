@@ -10,9 +10,9 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await getCurrentUser();
   if (!can(user?.role, "events:read")) return NextResponse.json({ error: "Sign in required." }, { status: 401 });
-  const includeDemo = !getSettings().hideDemoData;
+  const includeDemo = !(await getSettings()).hideDemoData;
   return NextResponse.json(
-    { unread: countUnread(includeDemo), items: listNotifications({ limit: 25, includeDemo }) },
+    { unread: await countUnread(includeDemo), items: await listNotifications({ limit: 25, includeDemo }) },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
@@ -20,6 +20,6 @@ export async function GET() {
 export async function POST() {
   const user = await getCurrentUser();
   if (!can(user?.role, "events:read")) return NextResponse.json({ error: "Sign in required." }, { status: 401 });
-  markAllRead();
+  await markAllRead();
   return NextResponse.json({ ok: true });
 }

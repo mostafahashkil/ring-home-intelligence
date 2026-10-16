@@ -71,8 +71,8 @@ interface StoredCreds {
   updatedAt: number;
 }
 
-export function loadCredentials(): StoredCreds | null {
-  const r = getDb().prepare("SELECT * FROM ring_credentials WHERE id = 1").get() as Record<string, unknown> | undefined;
+export async function loadCredentials(): Promise<StoredCreds | null> {
+  const r = await (await getDb()).get("SELECT * FROM ring_credentials WHERE id = 1");
   if (!r) return null;
   try {
     return {
@@ -90,16 +90,14 @@ export function loadCredentials(): StoredCreds | null {
   }
 }
 
-export function saveCredentials(c: Omit<StoredCreds, "updatedAt">) {
-  getDb()
-    .prepare(
+export async function saveCredentials(c: Omit<StoredCreds, "updatedAt">) {
+  await (await getDb()).run(
       `INSERT INTO ring_credentials (id, account_id, access_token_enc, refresh_token_enc, access_expires_at, status, source, updated_at)
        VALUES (1, @accountId, @access, @refresh, @expires, @status, @source, @now)
        ON CONFLICT(id) DO UPDATE SET account_id = excluded.account_id, access_token_enc = excluded.access_token_enc,
          refresh_token_enc = excluded.refresh_token_enc, access_expires_at = excluded.access_expires_at,
          status = excluded.status, source = excluded.source, updated_at = excluded.updated_at`,
-    )
-    .run({
+    {
       accountId: c.accountId,
       access: c.accessToken ? seal(c.accessToken) : null,
       refresh: c.refreshToken ? seal(c.refreshToken) : null,
@@ -107,20 +105,22 @@ export function saveCredentials(c: Omit<StoredCreds, "updatedAt">) {
       status: c.status,
       source: c.source,
       now: Date.now(),
-    });
+    },
+  );
 }
 
-export function setAccountId(accountId: string) {
-  getDb().prepare("UPDATE ring_credentials SET account_id = ?, updated_at = ? WHERE id = 1").run(accountId, Date.now());
+export async function setAccountId(accountId: string) {
+  await (await getDb()).run("UPDATE ring_credentials SET account_id = ?, updated_at = ? WHERE id = 1", [accountId, Date.now()]);
 }
 
-export function markExpired() {
-  getDb().prepare("UPDATE ring_credentials SET status = 'auth_expired', updated_at = ? WHERE id = 1").run(Date.now());
+export async function markExpired() {
+  await (await getDb()).run("UPDATE ring_credentials SET status = 'auth_expired', updated_at = ? WHERE id = 1", [Date.now()]);
 }
 
-export function deleteCredentials() {
-  getDb().prepare("DELETE FROM ring_credentials").run();
-  getDb().prepare("DELETE FROM oauth_states").run();
+export async function deleteCredentials() {
+  const db = await getDb();
+  await db.run("DELETE FROM ring_credentials");
+  await db.run("DELETE FROM oauth_states");
 }
 
 async function tokenRequest(params: Record<string, string>, fetchImpl: typeof fetch = fetch) {
@@ -146,7 +146,7 @@ function expiry(expiresIn: number | undefined, now: number) {
 /** Exchange a refresh token; persists the rotated pair. */
 export async function refreshTokens(fetchImpl: typeof fetch = fetch, now = Date.now()): Promise<string> {
   const cfg = ringConfig();
-  const stored = loadCredentials();
+  const stored = await loadCredentials();
   const refreshToken = stored?.refreshToken ?? cfg.envRefreshToken;
   if (!refreshToken) throw new RingAuthError("No Ring refresh token available. Connect your Ring account.", "not_configured");
   if (!cfg.clientId || !cfg.clientSecret) {
@@ -157,7 +157,7 @@ export async function refreshTokens(fetchImpl: typeof fetch = fetch, now = Date.
       { grant_type: "refresh_token", refresh_token: refreshToken, client_id: cfg.clientId, client_secret: cfg.clientSecret },
       fetchImpl,
     );
-    saveCredentials({
+    await saveCredentials({
       accountId: stored?.accountId ?? null,
       accessToken: t.access_token,
       refreshToken: t.refresh_token ?? refreshToken,
@@ -167,14 +167,14 @@ export async function refreshTokens(fetchImpl: typeof fetch = fetch, now = Date.
     });
     return t.access_token;
   } catch (err) {
-    if (err instanceof RingAuthError && err.reason === "expired") markExpired();
+    if (err instanceof RingAuthError && err.reason === "expired") await markExpired();
     throw err;
   }
 }
 
 /** Current access token, refreshing proactively (60 s early). */
 export async function getAccessToken(fetchImpl: typeof fetch = fetch, now = Date.now()): Promise<string> {
-  const stored = loadCredentials();
+  const stored = await loadCredentials();
   if (stored?.status === "auth_expired") {
     throw new RingAuthError("Ring authorization expired. Reconnect your Ring account.", "expired");
   }
@@ -186,8 +186,8 @@ export async function getAccessToken(fetchImpl: typeof fetch = fetch, now = Date
   throw new RingAuthError("Ring is not connected.", "not_configured");
 }
 
-export function isRingConnected(): boolean {
-  const stored = loadCredentials();
+export async function isRingConnected(): Promise<boolean> {
+  const stored = await loadCredentials();
   if (stored) return stored.status === "connected";
   const cfg = ringConfig();
   return Boolean(cfg.envAccessToken || (cfg.envRefreshToken && cfg.clientId && cfg.clientSecret));
@@ -203,19 +203,19 @@ export function pkcePair() {
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
-export function beginOAuth(userId: string, now = Date.now()): string {
+export async function beginOAuth(userId: string, now = Date.now()): Promise<string> {
   const cfg = ringConfig();
   if (!canStartOAuth(cfg)) throw new RingAuthError("Ring OAuth isn't configured on this server.", "not_configured");
   const state = randomBytes(24).toString("base64url");
   const { verifier, challenge } = pkcePair();
-  const db = getDb();
-  db.prepare("DELETE FROM oauth_states WHERE created_at < ?").run(now - OAUTH_STATE_TTL_MS);
-  db.prepare("INSERT INTO oauth_states (state_hash, code_verifier_enc, user_id, created_at) VALUES (?, ?, ?, ?)").run(
+  const db = await getDb();
+  await db.run("DELETE FROM oauth_states WHERE created_at < ?", [now - OAUTH_STATE_TTL_MS]);
+  await db.run("INSERT INTO oauth_states (state_hash, code_verifier_enc, user_id, created_at) VALUES (?, ?, ?, ?)", [
     sha256(state),
     seal(verifier),
     userId,
     now,
-  );
+  ]);
   const url = new URL(RING_AUTHORIZE_URL);
   url.searchParams.set("client_id", cfg.clientId!);
   url.searchParams.set("redirect_uri", cfg.redirectUri!);
@@ -234,11 +234,12 @@ export async function completeOAuth(
   now = Date.now(),
 ): Promise<void> {
   const cfg = ringConfig();
-  const db = getDb();
-  const row = db.prepare("SELECT * FROM oauth_states WHERE state_hash = ?").get(sha256(params.state)) as
-    | { code_verifier_enc: string; user_id: string; created_at: number }
-    | undefined;
-  db.prepare("DELETE FROM oauth_states WHERE state_hash = ?").run(sha256(params.state));
+  const db = await getDb();
+  const row = await db.get<{ code_verifier_enc: string; user_id: string; created_at: number }>(
+    "SELECT * FROM oauth_states WHERE state_hash = ?",
+    [sha256(params.state)],
+  );
+  await db.run("DELETE FROM oauth_states WHERE state_hash = ?", [sha256(params.state)]);
   if (!row || row.user_id !== params.userId || now - row.created_at > OAUTH_STATE_TTL_MS) {
     throw new RingAuthError("The Ring sign-in link expired or didn't match this session. Please try again.", "exchange_failed");
   }
@@ -253,7 +254,7 @@ export async function completeOAuth(
     },
     fetchImpl,
   );
-  saveCredentials({
+  await saveCredentials({
     accountId: null,
     accessToken: t.access_token,
     refreshToken: t.refresh_token ?? null,

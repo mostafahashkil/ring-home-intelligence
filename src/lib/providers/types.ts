@@ -30,7 +30,7 @@ export interface EventProvider {
   isDemo: boolean;
   supportedCategories: EventCategory[];
   capabilities: Capability[];
-  connection(): ProviderConnection;
+  connection(): Promise<ProviderConnection>;
   /** Pulls cameras and recent events. Real providers call their API; demo returns fixtures. */
   sync(): Promise<{ cameras: ProviderCameraInput[]; events: ProviderEventInput[] }>;
 }

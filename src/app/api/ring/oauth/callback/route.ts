@@ -28,14 +28,14 @@ export async function GET(req: NextRequest) {
     if (error) {
       // e.g. access_denied with error_description=ring_base_plan_required
       const desc = sp.get("error_description");
-      audit(user.id, "integration.ring_link_failed", null, { error, desc });
+      await audit(user.id, "integration.ring_link_failed", null, { error, desc });
       return back(desc === "ring_base_plan_required" ? "base_plan_required" : (ERRORS[error] ?? "error"));
     }
     const code = sp.get("code");
     const state = sp.get("state");
     if (!code || !state) return back("error");
     await completeOAuth({ code, state, userId: user.id });
-    audit(user.id, "integration.ring_connected");
+    await audit(user.id, "integration.ring_connected");
     try {
       await syncProvider("ring", user.id);
     } catch (err) {

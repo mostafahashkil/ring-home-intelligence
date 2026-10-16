@@ -44,19 +44,19 @@ export class RingProvider implements EventProvider {
 
   constructor(private fetchImpl?: typeof fetch) {}
 
-  connection(): ProviderConnection {
-    const lastSyncAt = Number(getMeta("ring.lastSyncAt")) || null;
-    if (!hasAnyRingSetup() && !loadCredentials()) {
+  async connection(): Promise<ProviderConnection> {
+    const lastSyncAt = Number(await getMeta("ring.lastSyncAt")) || null;
+    const creds = await loadCredentials();
+    if (!hasAnyRingSetup() && !creds) {
       return { state: "not_configured", message: "Ring isn't configured on this server. See README → Connecting Ring.", lastSyncAt };
     }
-    const creds = loadCredentials();
     if (creds?.status === "auth_expired") {
       return { state: "auth_expired", message: "Ring authorization expired. Reconnect to resume updates.", lastSyncAt };
     }
-    if (!isRingConnected()) {
+    if (!(await isRingConnected())) {
       return { state: "disconnected", message: "Ring is configured but not connected yet.", lastSyncAt };
     }
-    const lastError = getMeta("ring.lastSyncError");
+    const lastError = await getMeta("ring.lastSyncError");
     if (lastError) return { state: "error", message: lastError, lastSyncAt };
     return { state: "connected", message: "Connected to the Ring Partner API.", lastSyncAt };
   }
@@ -64,9 +64,9 @@ export class RingProvider implements EventProvider {
   async sync(): Promise<{ cameras: ProviderCameraInput[]; events: ProviderEventInput[] }> {
     const client = createRingClient(this.fetchImpl);
     try {
-      if (!loadCredentials()?.accountId) {
+      if (!(await loadCredentials())?.accountId) {
         try {
-          setAccountId(await client.getAccountId());
+          await setAccountId(await client.getAccountId());
         } catch (err) {
           log.warn("ring.account_id_unavailable", { err: err as Error });
         }
@@ -108,13 +108,13 @@ export class RingProvider implements EventProvider {
           }
         }
       }
-      setMeta("ring.lastSyncAt", String(Date.now()));
-      setMeta("ring.lastSyncError", "");
+      await setMeta("ring.lastSyncAt", String(Date.now()));
+      await setMeta("ring.lastSyncError", "");
       return { cameras, events };
     } catch (err) {
       const message =
         err instanceof RingApiError || err instanceof RingAuthError ? err.message : "Couldn't reach Ring. Try again later.";
-      setMeta("ring.lastSyncError", message);
+      await setMeta("ring.lastSyncError", message);
       log.error("ring.sync_failed", { err: err as Error });
       throw err;
     }

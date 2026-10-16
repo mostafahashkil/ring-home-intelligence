@@ -6,7 +6,7 @@
  */
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { getDb } from "../db";
+import { getDb, Row } from "../db";
 import { Role, User } from "../domain/types";
 import { newId } from "../util/id";
 
@@ -71,82 +71,90 @@ export function verifyPassword(password: string, stored: string): boolean {
 
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 
-function toUser(r: Record<string, unknown>): User {
+function toUser(r: Row): User {
   return { id: r.id as string, email: r.email as string, role: r.role as Role, createdAt: r.created_at as number };
 }
 
-export function countUsers(): number {
-  return (getDb().prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number }).n;
+export async function countUsers(): Promise<number> {
+  return (await (await getDb()).get<{ n: number }>("SELECT COUNT(*) AS n FROM users"))!.n;
 }
 
-export function listUsers(): User[] {
-  return (getDb().prepare("SELECT * FROM users ORDER BY created_at ASC").all() as Record<string, unknown>[]).map(toUser);
+export async function listUsers(): Promise<User[]> {
+  return (await (await getDb()).all("SELECT * FROM users ORDER BY created_at ASC")).map(toUser);
 }
 
-export function createUser(email: string, password: string, role: Role): User {
+export async function createUser(email: string, password: string, role: Role): Promise<User> {
   const creds = CredentialsSchema.parse({ email, password });
   const id = newId("usr");
-  getDb()
-    .prepare("INSERT INTO users (id, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)")
-    .run(id, creds.email, hashPassword(creds.password), role, Date.now());
+  await (await getDb()).run("INSERT INTO users (id, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)", [
+    id,
+    creds.email,
+    hashPassword(creds.password),
+    role,
+    Date.now(),
+  ]);
   return { id, email: creds.email, role, createdAt: Date.now() };
 }
 
-export function deleteUser(id: string) {
-  getDb().prepare("DELETE FROM users WHERE id = ?").run(id);
+export async function deleteUser(id: string) {
+  await (await getDb()).run("DELETE FROM users WHERE id = ?", [id]);
 }
 
 let dummyHash: string | null = null;
 
 export type LoginResult = { ok: true; user: User } | { ok: false; reason: "invalid" | "locked" };
 
-export function verifyLogin(email: string, password: string, now = Date.now()): LoginResult {
+export async function verifyLogin(email: string, password: string, now = Date.now()): Promise<LoginResult> {
   const key = email.trim().toLowerCase();
-  const db = getDb();
-  const attempt = db.prepare("SELECT count, window_start FROM login_attempts WHERE key = ?").get(key) as
-    | { count: number; window_start: number }
-    | undefined;
+  const db = await getDb();
+  const attempt = await db.get<{ count: number; window_start: number }>(
+    "SELECT count, window_start FROM login_attempts WHERE key = ?",
+    [key],
+  );
   if (attempt && now - attempt.window_start < LOGIN_WINDOW_MS && attempt.count >= LOGIN_MAX_FAILURES) {
     return { ok: false, reason: "locked" };
   }
-  const row = db.prepare("SELECT * FROM users WHERE email = ?").get(key) as Record<string, unknown> | undefined;
+  const row = await db.get("SELECT * FROM users WHERE email = ?", [key]);
   // Always run scrypt so response time doesn't reveal whether the account exists.
   dummyHash ??= hashPassword(randomBytes(12).toString("hex"));
   const ok = verifyPassword(password, row ? (row.password_hash as string) : dummyHash) && !!row;
   if (!ok || !row) {
     const fresh = !attempt || now - attempt.window_start >= LOGIN_WINDOW_MS;
-    db.prepare(
+    await db.run(
       "INSERT INTO login_attempts (key, count, window_start) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET count = ?, window_start = ?",
-    ).run(key, now, fresh ? 1 : attempt!.count + 1, fresh ? now : attempt!.window_start);
+      [key, now, fresh ? 1 : attempt!.count + 1, fresh ? now : attempt!.window_start],
+    );
     return { ok: false, reason: "invalid" };
   }
-  db.prepare("DELETE FROM login_attempts WHERE key = ?").run(key);
+  await db.run("DELETE FROM login_attempts WHERE key = ?", [key]);
   return { ok: true, user: toUser(row) };
 }
 
-export function createSessionToken(userId: string, now = Date.now()): { token: string; expiresAt: number } {
+export async function createSessionToken(userId: string, now = Date.now()): Promise<{ token: string; expiresAt: number }> {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = now + SESSION_TTL_MS;
-  getDb()
-    .prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
-    .run(sha256(token), userId, now, expiresAt);
+  await (await getDb()).run("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)", [
+    sha256(token),
+    userId,
+    now,
+    expiresAt,
+  ]);
   return { token, expiresAt };
 }
 
-export function userForSessionToken(token: string | undefined | null, now = Date.now()): User | null {
+export async function userForSessionToken(token: string | undefined | null, now = Date.now()): Promise<User | null> {
   if (!token || token.length > 100) return null;
-  const row = getDb()
-    .prepare(
-      "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
-    )
-    .get(sha256(token), now) as Record<string, unknown> | undefined;
+  const row = await (await getDb()).get(
+    "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
+    [sha256(token), now],
+  );
   return row ? toUser(row) : null;
 }
 
-export function revokeSessionToken(token: string) {
-  getDb().prepare("DELETE FROM sessions WHERE token_hash = ?").run(sha256(token));
+export async function revokeSessionToken(token: string) {
+  await (await getDb()).run("DELETE FROM sessions WHERE token_hash = ?", [sha256(token)]);
 }
 
-export function revokeUserSessions(userId: string) {
-  getDb().prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+export async function revokeUserSessions(userId: string) {
+  await (await getDb()).run("DELETE FROM sessions WHERE user_id = ?", [userId]);
 }

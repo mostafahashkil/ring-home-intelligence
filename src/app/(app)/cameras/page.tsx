@@ -16,10 +16,11 @@ export const metadata = { title: "Cameras & Zones" };
 
 export default async function CamerasPage() {
   const user = await requireAppUser();
-  const settings = getSettings();
+  const settings = await getSettings();
   const tz = settings.timezone;
-  const cameras = listCameras({ includeDemo: !settings.hideDemoData });
+  const cameras = await listCameras({ includeDemo: !settings.hideDemoData });
   const providers = getProviders();
+  const connections = await Promise.all(providers.map((p) => p.connection()));
   const editable = can(user.role, "settings:manage");
   const canSync = can(user.role, "integrations:manage");
 
@@ -28,8 +29,8 @@ export default async function CamerasPage() {
       <PageHeader title="Cameras & Zones" description="Devices reported by your connected provider, plus demo cameras when demo data is on." />
 
       <div className="space-y-6">
-        {providers.map((p) => {
-          const conn = p.connection();
+        {providers.map((p, i) => {
+          const conn = connections[i]!;
           const cams = cameras.filter((c) => c.provider === p.id);
           if (p.isDemo && conn.state !== "demo" && cams.length === 0) return null;
           return (

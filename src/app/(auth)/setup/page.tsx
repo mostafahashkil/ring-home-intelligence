@@ -7,8 +7,8 @@ import { AuthCard } from "../AuthCard";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Set up" };
 
-export default function SetupPage() {
-  if (countUsers() > 0) redirect("/login");
+export default async function SetupPage() {
+  if ((await countUsers()) > 0) redirect("/login");
   return (
     <AuthCard
       title="Create the owner account"

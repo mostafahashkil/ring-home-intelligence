@@ -38,7 +38,7 @@ const RING_STATUS: Record<string, { tone: "ok" | "warn" | "danger"; text: string
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const user = await requireAppUser();
   const sp = await searchParams;
-  const settings = getSettings();
+  const settings = await getSettings();
   const tz = settings.timezone;
 
   if (!can(user.role, "settings:manage")) {
@@ -53,14 +53,14 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     );
   }
 
-  const ring = getProviders().find((p) => p.id === "ring")!.connection();
+  const ring = await getProviders().find((p) => p.id === "ring")!.connection();
   const cfg = ringConfig();
-  const creds = loadCredentials();
+  const creds = await loadCredentials();
   const h = await headers();
   const origin = process.env.APP_BASE_URL || `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host")}`;
   const status = sp.ring ? RING_STATUS[sp.ring] : null;
-  const users = listUsers();
-  const auditRows = listAudit(50);
+  const users = await listUsers();
+  const auditRows = await listAudit(50);
 
   return (
     <>

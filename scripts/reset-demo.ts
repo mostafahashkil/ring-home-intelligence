@@ -5,9 +5,9 @@ import { getSettings, updateSettings } from "../src/lib/repo/settings";
 
 async function main() {
   await ensureInitialized();
-  if (!getSettings().demoEnabled) updateSettings({ demoEnabled: true });
+  if (!(await getSettings()).demoEnabled) await updateSettings({ demoEnabled: true });
   await resetDemo("cli");
-  const demo = listEvents({ limit: 1000 }).events.filter((e) => e.demo).length;
+  const demo = (await listEvents({ limit: 1000 })).events.filter((e) => e.demo).length;
   console.log(`Demo data reset: ${demo} demo events.`);
 }
 

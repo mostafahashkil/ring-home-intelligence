@@ -1,7 +1,7 @@
-import { getDb, json } from "../db";
+import { getDb, json, Row } from "../db";
 import { EventCategory, NormalizedEvent, NormalizedEventSchema, ProviderId, Severity } from "../domain/types";
 
-function toEvent(r: Record<string, unknown>): NormalizedEvent {
+function toEvent(r: Row): NormalizedEvent {
   return {
     id: r.id as string,
     provider: r.provider as ProviderId,
@@ -59,63 +59,56 @@ function toRow(e: NormalizedEvent) {
   };
 }
 
-export function insertEvent(e: NormalizedEvent): NormalizedEvent {
+export async function insertEvent(e: NormalizedEvent): Promise<NormalizedEvent> {
   const valid = NormalizedEventSchema.parse(e);
-  getDb()
-    .prepare(
+  await (await getDb()).run(
       `INSERT INTO events (id, provider, provider_event_id, timestamp, end_timestamp, camera_id, zone_id, event_type, provider_type,
          summary, observations, inference, confidence, severity, association, household_profile_id, evidence_reference, signals,
          rule_id, decision, feedback, derived_from, demo, created_at)
        VALUES (@id, @provider, @providerEventId, @timestamp, @endTimestamp, @cameraId, @zoneId, @eventType, @providerType,
          @summary, @observations, @inference, @confidence, @severity, @association, @householdProfileId, @evidenceReference, @signals,
          @ruleId, @decision, @feedback, @derivedFrom, @demo, @createdAt)`,
-    )
-    .run(toRow(valid));
+    toRow(valid),
+  );
   return valid;
 }
 
-export function updateEvent(e: NormalizedEvent): NormalizedEvent {
+export async function updateEvent(e: NormalizedEvent): Promise<NormalizedEvent> {
   const valid = NormalizedEventSchema.parse(e);
-  getDb()
-    .prepare(
+  await (await getDb()).run(
       `UPDATE events SET end_timestamp = @endTimestamp, event_type = @eventType, summary = @summary, observations = @observations,
          inference = @inference, confidence = @confidence, severity = @severity, association = @association,
          household_profile_id = @householdProfileId, evidence_reference = @evidenceReference, signals = @signals,
          rule_id = @ruleId, decision = @decision, feedback = @feedback WHERE id = @id`,
-    )
-    .run(toRow(valid));
+    toRow(valid),
+  );
   return valid;
 }
 
-export function getEvent(id: string): NormalizedEvent | null {
-  const r = getDb().prepare("SELECT * FROM events WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+export async function getEvent(id: string): Promise<NormalizedEvent | null> {
+  const r = await (await getDb()).get("SELECT * FROM events WHERE id = ?", [id]);
   return r ? toEvent(r) : null;
 }
 
-export function findByProviderEventId(provider: ProviderId, providerEventId: string): NormalizedEvent | null {
-  const r = getDb()
-    .prepare("SELECT * FROM events WHERE provider = ? AND provider_event_id = ?")
-    .get(provider, providerEventId) as Record<string, unknown> | undefined;
+export async function findByProviderEventId(provider: ProviderId, providerEventId: string): Promise<NormalizedEvent | null> {
+  const r = await (await getDb()).get("SELECT * FROM events WHERE provider = ? AND provider_event_id = ?", [provider, providerEventId]);
   return r ? toEvent(r) : null;
 }
 
 /** Same-camera event of a compatible type within ±toleranceMs (webhook vs. history duplicates). */
-export function findNearDuplicate(
+export async function findNearDuplicate(
   provider: ProviderId,
   cameraId: string,
   types: EventCategory[],
   timestamp: number,
   toleranceMs: number,
-): NormalizedEvent | null {
+): Promise<NormalizedEvent | null> {
   if (types.length === 0) return null;
-  const r = getDb()
-    .prepare(
+  const r = await (await getDb()).get(
       `SELECT * FROM events WHERE provider = ? AND camera_id = ? AND event_type IN (${types.map(() => "?").join(",")})
        AND timestamp BETWEEN ? AND ? ORDER BY ABS(timestamp - ?) LIMIT 1`,
-    )
-    .get(provider, cameraId, ...types, timestamp - toleranceMs, timestamp + toleranceMs, timestamp) as
-    | Record<string, unknown>
-    | undefined;
+    [provider, cameraId, ...types, timestamp - toleranceMs, timestamp + toleranceMs, timestamp],
+  );
   return r ? toEvent(r) : null;
 }
 
@@ -132,7 +125,8 @@ export interface EventFilter {
   offset?: number;
 }
 
-export function listEvents(f: EventFilter = {}): { events: NormalizedEvent[]; total: number } {
+export async function listEvents(f: EventFilter = {}): Promise<{ events: NormalizedEvent[]; total: number }> {
+  const db = await getDb();
   const where: string[] = [];
   const params: unknown[] = [];
   const add = (clause: string, value: unknown) => {
@@ -152,28 +146,28 @@ export function listEvents(f: EventFilter = {}): { events: NormalizedEvent[]; to
     params.push(...f.severities);
   }
   if (f.includeDemo === false) where.push("demo = 0");
-  if (f.q) add("summary LIKE ? ESCAPE '\\'", `%${f.q.replace(/[\\%_]/g, (c) => "\\" + c)}%`);
+  // SQLite LIKE is case-insensitive for ASCII; match that on Postgres.
+  if (f.q) add(`summary ${db.dialect === "postgres" ? "ILIKE" : "LIKE"} ? ESCAPE '\\'`, `%${f.q.replace(/[\\%_]/g, (c) => "\\" + c)}%`);
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const db = getDb();
-  const total = (db.prepare(`SELECT COUNT(*) AS n FROM events ${clause}`).get(...params) as { n: number }).n;
-  const rows = db
-    .prepare(`SELECT * FROM events ${clause} ORDER BY timestamp DESC LIMIT ? OFFSET ?`)
-    .all(...params, f.limit ?? 50, f.offset ?? 0) as Record<string, unknown>[];
+  const total = (await db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM events ${clause}`, params))!.n;
+  const rows = await db.all(`SELECT * FROM events ${clause} ORDER BY timestamp DESC LIMIT ? OFFSET ?`, [
+    ...params,
+    f.limit ?? 50,
+    f.offset ?? 0,
+  ]);
   return { events: rows.map(toEvent), total };
 }
 
-export function recentEventsAtCamera(cameraId: string, since: number, types: EventCategory[]): NormalizedEvent[] {
-  const rows = getDb()
-    .prepare(
+export async function recentEventsAtCamera(cameraId: string, since: number, types: EventCategory[]): Promise<NormalizedEvent[]> {
+  const rows = await (await getDb()).all(
       `SELECT * FROM events WHERE camera_id = ? AND timestamp >= ? AND event_type IN (${types.map(() => "?").join(",")})
        ORDER BY timestamp ASC`,
-    )
-    .all(cameraId, since, ...types) as Record<string, unknown>[];
+    [cameraId, since, ...types],
+  );
   return rows.map(toEvent);
 }
 
-export function eventCategoriesPresent(): EventCategory[] {
-  return (getDb().prepare("SELECT DISTINCT event_type FROM events").all() as { event_type: EventCategory }[]).map(
-    (r) => r.event_type,
-  );
+export async function eventCategoriesPresent(): Promise<EventCategory[]> {
+  const rows = await (await getDb()).all<{ event_type: EventCategory }>("SELECT DISTINCT event_type FROM events");
+  return rows.map((r) => r.event_type);
 }

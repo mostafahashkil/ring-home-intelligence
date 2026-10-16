@@ -13,48 +13,48 @@ function withFeedback(e: NormalizedEvent, f: Omit<Feedback, "at">, now: number):
   return { ...e, feedback: [...e.feedback, { ...f, at: now }].slice(-20) };
 }
 
-export function confirmEventProfile(eventId: string, profileId: string, actorId: string, now = Date.now()) {
-  const event = getEvent(eventId);
-  const profile = getProfile(profileId);
+export async function confirmEventProfile(eventId: string, profileId: string, actorId: string, now = Date.now()) {
+  const event = await getEvent(eventId);
+  const profile = await getProfile(profileId);
   if (!event || !profile) throw new Error("Event or profile not found.");
   if (event.demo !== profile.demo) throw new Error("Demo events can only be labeled with demo profiles (and vice versa).");
   const updated = withFeedback(applyUserConfirmation(event, profile), { label: "confirmed_profile", by: actorId }, now);
-  updateEvent(updated);
-  audit(actorId, "event.association_confirmed", eventId, { profileId, demo: event.demo });
+  await updateEvent(updated);
+  await audit(actorId, "event.association_confirmed", eventId, { profileId, demo: event.demo });
   return updated;
 }
 
-export function rejectEventProfile(eventId: string, actorId: string, now = Date.now()) {
-  const event = getEvent(eventId);
+export async function rejectEventProfile(eventId: string, actorId: string, now = Date.now()) {
+  const event = await getEvent(eventId);
   if (!event) throw new Error("Event not found.");
   const updated = withFeedback(toUnidentified(event), { label: "not_profile", by: actorId }, now);
-  updateEvent(updated);
-  audit(actorId, "event.association_rejected", eventId, { previousProfileId: event.householdProfileId });
+  await updateEvent(updated);
+  await audit(actorId, "event.association_rejected", eventId, { previousProfileId: event.householdProfileId });
   return updated;
 }
 
-export function labelEvent(
+export async function labelEvent(
   eventId: string,
   label: "not_delivery" | "false_alarm" | "helpful" | "not_helpful",
   actorId: string,
   now = Date.now(),
 ) {
-  const event = getEvent(eventId);
+  const event = await getEvent(eventId);
   if (!event) throw new Error("Event not found.");
-  updateEvent(withFeedback(event, { label, by: actorId }, now));
-  audit(actorId, "event.feedback", eventId, { label });
+  await updateEvent(withFeedback(event, { label, by: actorId }, now));
+  await audit(actorId, "event.feedback", eventId, { label });
 }
 
 /**
  * Consent withdrawal removes the profile from all past events (they become "not identified")
  * and blocks future associations.
  */
-export function clearProfileAssociations(profileId: string, actorId: string): number {
-  const ids = getDb().prepare("SELECT id FROM events WHERE household_profile_id = ?").all(profileId) as { id: string }[];
+export async function clearProfileAssociations(profileId: string, actorId: string): Promise<number> {
+  const ids = await (await getDb()).all<{ id: string }>("SELECT id FROM events WHERE household_profile_id = ?", [profileId]);
   for (const { id } of ids) {
-    const e = getEvent(id);
-    if (e) updateEvent(toUnidentified(e, "association removed"));
+    const e = await getEvent(id);
+    if (e) await updateEvent(toUnidentified(e, "association removed"));
   }
-  audit(actorId, "profile.associations_cleared", profileId, { count: ids.length });
+  await audit(actorId, "profile.associations_cleared", profileId, { count: ids.length });
   return ids.length;
 }

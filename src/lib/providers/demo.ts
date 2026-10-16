@@ -197,8 +197,8 @@ export class DemoProvider implements EventProvider {
     { feature: "Recorded clips", support: "unsupported", note: "Demo events have no video." },
   ];
 
-  connection(): ProviderConnection {
-    const enabled = getSettings().demoEnabled;
+  async connection(): Promise<ProviderConnection> {
+    const enabled = (await getSettings()).demoEnabled;
     return {
       state: enabled ? "demo" : "disconnected",
       message: enabled ? "Showing sample data — not from your cameras." : "Demo data is turned off.",

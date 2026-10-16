@@ -12,7 +12,7 @@ import { audit } from "./repo/audit";
 import { upsertCamera } from "./repo/cameras";
 import { listProfiles, saveProfile } from "./repo/profiles";
 import { saveRule } from "./repo/rules";
-import { getMeta, getSettings, setMeta } from "./repo/settings";
+import { claimMeta, deleteMeta, getMeta, getSettings, setMeta } from "./repo/settings";
 
 export const DEFAULT_RULES: Omit<Rule, "id" | "createdAt">[] = [
   { name: "Safety: needs attention or higher", enabled: true, priority: 80, categories: ["behavior"], cameraIds: [], profileIds: [], minConfidence: null, minSeverity: "attention", timeWindow: null, action: "push" },
@@ -26,30 +26,37 @@ export const DEFAULT_RULES: Omit<Rule, "id" | "createdAt">[] = [
 
 let initializing: Promise<void> | null = null;
 
-export function ensureInitialized(): Promise<void> {
-  if (getMeta("initialized") === "1") {
-    maybeApplyRetention();
-    return Promise.resolve();
+export async function ensureInitialized(): Promise<void> {
+  if ((await getMeta("initialized")) === "1") {
+    await maybeApplyRetention();
+    return;
   }
   initializing ??= (async () => {
     try {
-      for (const r of DEFAULT_RULES) saveRule(r);
-      if (getSettings().demoEnabled) await seedDemo("system");
-      setMeta("initialized", "1");
-      audit("system", "app.initialized");
+      // Claim first-run setup atomically: with several server instances, only one seeds.
+      if (!(await claimMeta("init.claimed", String(Date.now())))) return;
+      try {
+        for (const r of DEFAULT_RULES) await saveRule(r);
+        if ((await getSettings()).demoEnabled) await seedDemo("system");
+        await setMeta("initialized", "1");
+        await audit("system", "app.initialized");
+      } catch (err) {
+        await deleteMeta("init.claimed");
+        throw err;
+      }
     } finally {
       initializing = null;
     }
   })();
-  return initializing;
+  await initializing;
 }
 
 export async function seedDemo(actor: string, now = Date.now()) {
-  for (const c of DEMO_CAMERAS) upsertCamera({ ...c, provider: "demo", demo: true });
-  const existing = new Set(listProfiles().filter((p) => p.demo).map((p) => p.displayName));
-  DEMO_PROFILES.forEach((p, i) => {
-    if (existing.has(p.displayName)) return;
-    saveProfile({
+  for (const c of DEMO_CAMERAS) await upsertCamera({ ...c, provider: "demo", demo: true });
+  const existing = new Set((await listProfiles()).filter((p) => p.demo).map((p) => p.displayName));
+  for (const [i, p] of DEMO_PROFILES.entries()) {
+    if (existing.has(p.displayName)) continue;
+    await saveProfile({
       displayName: p.displayName,
       relationship: p.relationship,
       enabled: true,
@@ -61,20 +68,20 @@ export async function seedDemo(actor: string, now = Date.now()) {
       demo: true,
       createdAt: now - (10 - i) * 1000,
     });
-  });
-  const profiles = listProfiles().filter((p) => p.demo);
+  }
+  const profiles = (await listProfiles()).filter((p) => p.demo);
   for (const s of DEMO_SEED) {
     const ts = now - s.minutesAgo * 60_000;
     const result = await ingest(buildDemoEvent(s.template, ts), { now: ts });
     if (s.confirmProfile && result.status === "created") {
       const profile = profiles.find((p) => p.displayName === s.confirmProfile);
-      if (profile) confirmEventProfile(result.event.id, profile.id, "demo-seed", ts + 60_000);
+      if (profile) await confirmEventProfile(result.event.id, profile.id, "demo-seed", ts + 60_000);
     }
   }
-  audit(actor, "demo.seeded", null, { events: DEMO_SEED.length });
+  await audit(actor, "demo.seeded", null, { events: DEMO_SEED.length });
 }
 
 export async function resetDemo(actor: string) {
-  deleteAllDemoData(actor);
+  await deleteAllDemoData(actor);
   await seedDemo(actor);
 }

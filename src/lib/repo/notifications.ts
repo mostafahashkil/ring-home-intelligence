@@ -1,4 +1,4 @@
-import { getDb } from "../db";
+import { getDb, Row } from "../db";
 import { NotificationRecord, Severity } from "../domain/types";
 import { newId } from "../util/id";
 
@@ -9,7 +9,7 @@ export interface RecentNotification {
   createdAt: number;
 }
 
-function toNotification(r: Record<string, unknown>): NotificationRecord {
+function toNotification(r: Row): NotificationRecord {
   return {
     id: r.id as string,
     eventId: (r.event_id as string) ?? null,
@@ -25,23 +25,23 @@ function toNotification(r: Record<string, unknown>): NotificationRecord {
   };
 }
 
-export function insertNotification(
+export async function insertNotification(
   n: Omit<NotificationRecord, "id" | "readAt"> & { dedupKey: string | null; cameraId: string | null },
-): NotificationRecord {
+): Promise<NotificationRecord> {
   const id = newId("ntf");
-  getDb()
-    .prepare(
+  await (await getDb()).run(
       `INSERT INTO notifications (id, event_id, rule_id, channel, title, body, explanation, severity, dedup_key, camera_id, created_at, demo)
        VALUES (@id, @eventId, @ruleId, @channel, @title, @body, @explanation, @severity, @dedupKey, @cameraId, @createdAt, @demo)`,
-    )
-    .run({ ...n, id, demo: n.demo ? 1 : 0 });
+    { ...n, id, demo: n.demo ? 1 : 0 },
+  );
   return { ...n, id, readAt: null };
 }
 
-export function recentNotifications(since: number): RecentNotification[] {
-  const rows = getDb()
-    .prepare("SELECT channel, dedup_key, camera_id, created_at FROM notifications WHERE created_at >= ? ORDER BY created_at DESC")
-    .all(since) as Record<string, unknown>[];
+export async function recentNotifications(since: number): Promise<RecentNotification[]> {
+  const rows = await (await getDb()).all(
+    "SELECT channel, dedup_key, camera_id, created_at FROM notifications WHERE created_at >= ? ORDER BY created_at DESC",
+    [since],
+  );
   return rows.map((r) => ({
     channel: r.channel as NotificationRecord["channel"],
     dedupKey: (r.dedup_key as string) ?? null,
@@ -51,34 +51,31 @@ export function recentNotifications(since: number): RecentNotification[] {
 }
 
 /** Notifications people should see (quiet-log entries stay in the timeline only). */
-export function listNotifications(opts: { limit?: number; unreadOnly?: boolean; includeDemo?: boolean } = {}) {
+export async function listNotifications(opts: { limit?: number; unreadOnly?: boolean; includeDemo?: boolean } = {}) {
   const where = ["channel IN ('push','in_app','review')"];
   if (opts.unreadOnly) where.push("read_at IS NULL");
   if (opts.includeDemo === false) where.push("demo = 0");
-  const rows = getDb()
-    .prepare(`SELECT * FROM notifications WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT ?`)
-    .all(opts.limit ?? 30) as Record<string, unknown>[];
+  const rows = await (await getDb()).all(
+    `SELECT * FROM notifications WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT ?`,
+    [opts.limit ?? 30],
+  );
   return rows.map(toNotification);
 }
 
-export function countUnread(includeDemo = true): number {
-  const row = getDb()
-    .prepare(
-      `SELECT COUNT(*) AS n FROM notifications WHERE channel IN ('push','in_app','review') AND read_at IS NULL ${
+export async function countUnread(includeDemo = true): Promise<number> {
+  const row = await (await getDb()).get<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM notifications WHERE channel IN ('push','in_app','review') AND read_at IS NULL ${
         includeDemo ? "" : "AND demo = 0"
       }`,
-    )
-    .get() as { n: number };
-  return row.n;
+  );
+  return row!.n;
 }
 
-export function markAllRead() {
-  getDb().prepare("UPDATE notifications SET read_at = ? WHERE read_at IS NULL").run(Date.now());
+export async function markAllRead() {
+  await (await getDb()).run("UPDATE notifications SET read_at = ? WHERE read_at IS NULL", [Date.now()]);
 }
 
-export function notificationsForEvent(eventId: string): NotificationRecord[] {
-  const rows = getDb()
-    .prepare("SELECT * FROM notifications WHERE event_id = ? ORDER BY created_at ASC")
-    .all(eventId) as Record<string, unknown>[];
+export async function notificationsForEvent(eventId: string): Promise<NotificationRecord[]> {
+  const rows = await (await getDb()).all("SELECT * FROM notifications WHERE event_id = ? ORDER BY created_at ASC", [eventId]);
   return rows.map(toNotification);
 }

@@ -13,7 +13,7 @@ All demo content is labeled "Demo" and kept separate from real data.
 
 ## Quick start
 
-Requirements: Node.js 20.9 or newer (developed on Node 22), and npm. Nothing else is needed: the database is an embedded SQLite file.
+Requirements: Node.js 22.12 or newer, and npm. Nothing else is needed locally: development uses an embedded SQLite file. When deployed to Netlify, the app uses Netlify Database (managed Postgres) instead. See [Deploying to Netlify](#deploying-to-netlify).
 
 ```bash
 npm install
@@ -30,7 +30,7 @@ npm run dev                       # http://localhost:3000
 | --- | --- |
 | `npm run dev` | Development server on port 3000 |
 | `npm run build` / `npm start` | Production build and server |
-| `npm test` | Unit, integration and UI tests (Vitest) |
+| `npm test` | Unit, integration and UI tests (Vitest), on in-memory SQLite. To run them on Postgres: `TEST_DATABASE_URL=postgres://… npx vitest run --no-file-parallelism` |
 | `npm run lint` | ESLint (next/core-web-vitals and TypeScript rules) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run db:migrate` | Apply schema migrations. These also run automatically on startup. |
@@ -42,7 +42,8 @@ npm run dev                       # http://localhost:3000
 | --- | --- | --- |
 | `APP_ENCRYPTION_KEY` | In production | 32-byte base64 key. Encrypts Ring tokens at rest with AES-256-GCM. In development, a key file is generated in `./data` if this is unset. |
 | `APP_BASE_URL` | Recommended | Public base URL, used to show the webhook URL to register |
-| `DATABASE_PATH` | No | SQLite file path (default `./data/rhi.db`) |
+| `DATABASE_PATH` | No | SQLite file path for local development (default `./data/rhi.db`) |
+| `NETLIFY_DB_URL` | Set by Netlify | Postgres connection string. Netlify sets it automatically once Netlify Database is provisioned. When it is present, the app uses Postgres instead of SQLite. |
 | `RING_CLIENT_ID`, `RING_CLIENT_SECRET` | For Ring | Issued during Ring AppStore partner onboarding |
 | `RING_HMAC_SIGNING_KEY` | For webhooks | Verifies the `X-Signature` header on Ring webhooks |
 | `RING_OAUTH_REDIRECT_URI`, `RING_OAUTH_SCOPE` | For "Connect Ring" | Partner-initiated OAuth with PKCE. Ring offers this by invitation only. |
@@ -103,16 +104,31 @@ The **Cameras & Zones** page shows this table inside the app for each provider. 
 
 ---
 
+## Deploying to Netlify
+
+The repo includes `netlify.toml`, and the `@netlify/database` dependency makes Netlify provision a managed Postgres database on the first deploy.
+Serverless instances are short-lived and don't share a disk, so all state (accounts, sessions, events, settings) has to live in that
+shared database. Schema migrations run automatically, under an advisory lock, the first time an instance connects.
+
+Set these environment variables on the site:
+
+- `APP_ENCRYPTION_KEY` (required, mark it secret)
+- `APP_BASE_URL` (the site's URL)
+- the Ring variables, if you use Ring
+
+---
+
 ## Architecture
 
-**Stack:** Next.js 16 (App Router, React 19, server components and server actions), TypeScript (strict), Tailwind CSS, SQLite through
-better-sqlite3, zod for validation, and Vitest with Testing Library.
+**Stack:** Next.js 16 (App Router, React 19, server components and server actions), TypeScript (strict), Tailwind CSS, a database layer
+(`src/lib/db`) with two backends: SQLite through better-sqlite3 locally, and Postgres through Netlify Database when deployed. Also zod
+for validation, and Vitest with Testing Library.
 
 Why this stack: the app runs as a single process with nothing else to install. Server components keep provider tokens and household data
 on the server, and Ring's API must be called server-to-server anyway because it blocks browser CORS.
 
 ```
-Provider adapters ──► Ingest pipeline ─────────────────────────────────────► SQLite
+Provider adapters ──► Ingest pipeline ─────────────────────────────────────► SQLite / Postgres
  (Ring webhook,        validate (zod) → normalize → household association     events, notifications,
   Ring history sync,   → rules engine (pure) → store + notify + audit         profiles, rules, audit,
   Demo provider)       → behavior detection → derived events                  encrypted tokens

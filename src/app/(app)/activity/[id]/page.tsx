@@ -33,17 +33,17 @@ const FEEDBACK_LABELS: Record<string, string> = {
 export default async function EventPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireAppUser();
   const { id } = await params;
-  const event = getEvent(id);
+  const event = await getEvent(id);
   if (!event) notFound();
-  const settings = getSettings();
+  const settings = await getSettings();
   const tz = settings.timezone;
-  const camera = event.cameraId ? getCamera(event.cameraId) : null;
-  const profile = event.householdProfileId ? getProfile(event.householdProfileId) : null;
-  const rule = event.ruleId ? getRule(event.ruleId) : null;
-  const notifications = notificationsForEvent(event.id);
+  const camera = event.cameraId ? await getCamera(event.cameraId) : null;
+  const profile = event.householdProfileId ? await getProfile(event.householdProfileId) : null;
+  const rule = event.ruleId ? await getRule(event.ruleId) : null;
+  const notifications = await notificationsForEvent(event.id);
   const canFeedback = can(user.role, "events:feedback");
   const labelable = ["visitor", "arrival", "doorbell", "package"].includes(event.eventType);
-  const candidates = listProfiles().filter((p) => p.demo === event.demo && canManuallyAssociate(p));
+  const candidates = (await listProfiles()).filter((p) => p.demo === event.demo && canManuallyAssociate(p));
   const uncertain = isUncertain(event);
   const d = event.decision;
   const duration = event.endTimestamp ? Math.round((event.endTimestamp - event.timestamp) / 1000) : null;

@@ -20,16 +20,16 @@ export const metadata = { title: "Home" };
 
 export default async function HomePage() {
   const user = await requireAppUser();
-  const settings = getSettings();
+  const settings = await getSettings();
   const tz = settings.timezone;
   const includeDemo = !settings.hideDemoData;
   const now = currentTime();
   const since = now - 24 * 3_600_000;
-  const { events } = listEvents({ from: since, includeDemo, limit: 200 });
-  const cameras = new Map(listCameras().map((c) => [c.id, c]));
-  const profiles = listProfiles({ includeDemo });
+  const { events } = await listEvents({ from: since, includeDemo, limit: 200 });
+  const cameras = new Map((await listCameras()).map((c) => [c.id, c]));
+  const profiles = await listProfiles({ includeDemo });
   const camName = (id: string | null) => (id && cameras.get(id)?.name) || "Unknown camera";
-  const ring = getProviders().find((p) => p.id === "ring")!.connection();
+  const ring = await getProviders().find((p) => p.id === "ring")!.connection();
 
   const today = dayKey(now, tz);
   const todays = events.filter((e) => dayKey(e.timestamp, tz) === today);

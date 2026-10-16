@@ -27,11 +27,11 @@ export const metadata = { title: "Rules & Automations" };
 
 export default async function RulesPage() {
   const user = await requireAppUser();
-  const settings = getSettings();
-  const rules = listRules();
-  const cameras = listCameras();
-  const profiles = listProfiles();
-  const categories = supportedCategories();
+  const settings = await getSettings();
+  const rules = await listRules();
+  const cameras = await listCameras();
+  const profiles = await listProfiles();
+  const categories = await supportedCategories();
   const conflicts = findConflicts(rules);
   const editable = can(user.role, "rules:manage");
   const camName = new Map(cameras.map((c) => [c.id, c.name]));

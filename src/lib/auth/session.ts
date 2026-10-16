@@ -24,7 +24,7 @@ export async function requirePermission(permission: Permission): Promise<User> {
 }
 
 export async function startSession(userId: string) {
-  const { token, expiresAt } = createSessionToken(userId);
+  const { token, expiresAt } = await createSessionToken(userId);
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
@@ -38,6 +38,6 @@ export async function startSession(userId: string) {
 export async function endSession() {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
-  if (token) revokeSessionToken(token);
+  if (token) await revokeSessionToken(token);
   jar.delete(SESSION_COOKIE);
 }

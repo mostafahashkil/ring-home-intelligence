@@ -70,12 +70,12 @@ const pct = (f: FormData, k: string) => {
 
 export async function simulateDemoEvent(_p: ActionResult | null, form: FormData) {
   return guarded("demo:simulate", form, async (user, f) => {
-    if (!getSettings().demoEnabled) return fail("Turn on demo data to simulate events.");
+    if (!(await getSettings()).demoEnabled) return fail("Turn on demo data to simulate events.");
     const key = str(f, "template");
     if (!(key in DEMO_TEMPLATES)) return fail("Pick a sample event.");
     const r = await ingest(buildDemoEvent(key as keyof typeof DEMO_TEMPLATES, Date.now()));
     if (r.status !== "created") return fail("The sample event couldn't be created.");
-    audit(user.id, "demo.event_simulated", r.event.id, { template: key });
+    await audit(user.id, "demo.event_simulated", r.event.id, { template: key });
     revalidatePath("/", "layout");
     const extra = r.derived.length ? ` (+${r.derived.length} safety pattern${r.derived.length > 1 ? "s" : ""})` : "";
     return ok(`Demo event added: “${r.event.summary}” → ${r.event.decision?.channel.replace("_", " ")}${extra}.`);
@@ -83,26 +83,26 @@ export async function simulateDemoEvent(_p: ActionResult | null, form: FormData)
 }
 
 export async function confirmProfileAction(_p: ActionResult | null, form: FormData) {
-  return guarded("events:feedback", form, (user, f) => {
-    const e = confirmEventProfile(str(f, "eventId"), str(f, "profileId"), user.id);
+  return guarded("events:feedback", form, async (user, f) => {
+    const e = await confirmEventProfile(str(f, "eventId"), str(f, "profileId"), user.id);
     revalidatePath("/", "layout");
     return ok(`Labeled: ${e.summary}.`);
   });
 }
 
 export async function rejectProfileAction(_p: ActionResult | null, form: FormData) {
-  return guarded("events:feedback", form, (user, f) => {
-    rejectEventProfile(str(f, "eventId"), user.id);
+  return guarded("events:feedback", form, async (user, f) => {
+    await rejectEventProfile(str(f, "eventId"), user.id);
     revalidatePath("/", "layout");
     return ok("Association removed. The person is now shown as not identified.");
   });
 }
 
 export async function labelEventAction(_p: ActionResult | null, form: FormData) {
-  return guarded("events:feedback", form, (user, f) => {
+  return guarded("events:feedback", form, async (user, f) => {
     const label = str(f, "label");
     if (!["not_delivery", "false_alarm", "helpful", "not_helpful"].includes(label)) return fail("Unknown label.");
-    labelEvent(str(f, "eventId"), label as "not_delivery", user.id);
+    await labelEvent(str(f, "eventId"), label as "not_delivery", user.id);
     revalidatePath(`/activity/${str(f, "eventId")}`);
     return ok("Thanks — feedback saved. It's used to tune your preferences, not to train any model.");
   });
@@ -110,22 +110,22 @@ export async function labelEventAction(_p: ActionResult | null, form: FormData) 
 
 export async function markNotificationsRead() {
   await requirePermission("events:read");
-  markAllRead();
+  await markAllRead();
   revalidatePath("/", "layout");
 }
 
 // ---------- Household ----------
 
 export async function saveProfileAction(_p: ActionResult | null, form: FormData) {
-  return guarded("household:manage", form, (user, f) => {
+  return guarded("household:manage", form, async (user, f) => {
     const id = optStr(f, "id");
-    const existing = id ? getProfile(id) : null;
+    const existing = id ? await getProfile(id) : null;
     if (id && !existing) return fail("Profile not found.");
     const notifyMode = str(f, "notifyMode") as NotifyMode;
     if (!NOTIFY_MODES.includes(notifyMode)) return fail("Choose a notification preference.");
     const consent = str(f, "consentStatus") as "granted" | "pending" | "withdrawn";
     const cameraIds = list(f, "cameraIds");
-    const saved = saveProfile({
+    const saved = await saveProfile({
       id: existing?.id,
       createdAt: existing?.createdAt,
       demo: existing?.demo ?? false,
@@ -140,10 +140,10 @@ export async function saveProfileAction(_p: ActionResult | null, form: FormData)
     });
     let note = "";
     if (existing && existing.consentStatus !== "withdrawn" && saved.consentStatus === "withdrawn") {
-      const n = clearProfileAssociations(saved.id, user.id);
+      const n = await clearProfileAssociations(saved.id, user.id);
       note = ` Consent withdrawn — removed ${n} past association${n === 1 ? "" : "s"}.`;
     }
-    audit(user.id, existing ? "profile.updated" : "profile.created", saved.id, {
+    await audit(user.id, existing ? "profile.updated" : "profile.created", saved.id, {
       consentStatus: saved.consentStatus,
       notifyMode: saved.notifyMode,
       enabled: saved.enabled,
@@ -154,12 +154,12 @@ export async function saveProfileAction(_p: ActionResult | null, form: FormData)
 }
 
 export async function deleteProfileAction(_p: ActionResult | null, form: FormData) {
-  return guarded("household:manage", form, (user, f) => {
-    const p = getProfile(str(f, "id"));
+  return guarded("household:manage", form, async (user, f) => {
+    const p = await getProfile(str(f, "id"));
     if (!p) return fail("Profile not found.");
-    clearProfileAssociations(p.id, user.id);
-    deleteProfile(p.id);
-    audit(user.id, "profile.deleted", p.id);
+    await clearProfileAssociations(p.id, user.id);
+    await deleteProfile(p.id);
+    await audit(user.id, "profile.deleted", p.id);
     revalidatePath("/", "layout");
     return ok(`Deleted ${p.displayName} and removed their event associations.`);
   });
@@ -168,13 +168,13 @@ export async function deleteProfileAction(_p: ActionResult | null, form: FormDat
 // ---------- Cameras & integrations ----------
 
 export async function saveZoneAction(_p: ActionResult | null, form: FormData) {
-  return guarded("settings:manage", form, (user, f) => {
-    const cam = getCamera(str(f, "id"));
+  return guarded("settings:manage", form, async (user, f) => {
+    const cam = await getCamera(str(f, "id"));
     if (!cam) return fail("Camera not found.");
     const zone = optStr(f, "zone");
     if (zone && zone.length > 40) return fail("Keep zone names under 40 characters.");
-    setCameraZone(cam.id, zone);
-    audit(user.id, "camera.zone_updated", cam.id, { zone });
+    await setCameraZone(cam.id, zone);
+    await audit(user.id, "camera.zone_updated", cam.id, { zone });
     revalidatePath("/cameras");
     return ok(`Updated ${cam.name}.`);
   });
@@ -194,8 +194,8 @@ export async function syncRingAction(_p: ActionResult | null, form: FormData) {
 }
 
 export async function disconnectRingAction(_p: ActionResult | null, form: FormData) {
-  return guarded("integrations:manage", form, (user) => {
-    disconnectRing(user.id);
+  return guarded("integrations:manage", form, async (user) => {
+    await disconnectRing(user.id);
     revalidatePath("/", "layout");
     return ok("Ring tokens deleted from this app. To fully remove access, also remove the integration in the Ring app.");
   });
@@ -222,23 +222,23 @@ function parseRule(f: FormData) {
 }
 
 export async function saveRuleAction(_p: ActionResult | null, form: FormData) {
-  return guarded("rules:manage", form, (user, f) => {
+  return guarded("rules:manage", form, async (user, f) => {
     const id = optStr(f, "id");
-    const existing = id ? getRule(id) : null;
+    const existing = id ? await getRule(id) : null;
     if (id && !existing) return fail("Rule not found.");
-    const saved = saveRule({ ...parseRule(f), id: existing?.id, createdAt: existing?.createdAt });
-    audit(user.id, existing ? "rule.updated" : "rule.created", saved.id, { name: saved.name, action: saved.action, enabled: saved.enabled });
+    const saved = await saveRule({ ...parseRule(f), id: existing?.id, createdAt: existing?.createdAt });
+    await audit(user.id, existing ? "rule.updated" : "rule.created", saved.id, { name: saved.name, action: saved.action, enabled: saved.enabled });
     revalidatePath("/rules");
     return ok(`Saved rule “${saved.name}”.`);
   });
 }
 
 export async function deleteRuleAction(_p: ActionResult | null, form: FormData) {
-  return guarded("rules:manage", form, (user, f) => {
-    const r = getRule(str(f, "id"));
+  return guarded("rules:manage", form, async (user, f) => {
+    const r = await getRule(str(f, "id"));
     if (!r) return fail("Rule not found.");
-    deleteRule(r.id);
-    audit(user.id, "rule.deleted", r.id, { name: r.name });
+    await deleteRule(r.id);
+    await audit(user.id, "rule.deleted", r.id, { name: r.name });
     revalidatePath("/rules");
     return ok(`Deleted “${r.name}”.`);
   });
@@ -246,8 +246,8 @@ export async function deleteRuleAction(_p: ActionResult | null, form: FormData) 
 
 /** Test mode: evaluates a hypothetical event against the current rules. Nothing is stored or sent. */
 export async function previewRulesAction(_p: ActionResult | null, form: FormData) {
-  return guarded("events:read", form, (_user, f) => {
-    const settings = getSettings();
+  return guarded("events:read", form, async (_user, f) => {
+    const settings = await getSettings();
     const category = str(f, "category") as EventCategory;
     if (!EVENT_CATEGORIES.includes(category)) return fail("Choose a category.");
     const severity = (str(f, "severity") || "low") as Severity;
@@ -269,11 +269,11 @@ export async function previewRulesAction(_p: ActionResult | null, form: FormData
       severity: SEVERITIES.includes(severity) ? severity : "low",
       timestamp,
     };
-    const cameras = listCameras();
-    const profiles = listProfiles();
+    const cameras = await listCameras();
+    const profiles = await listProfiles();
     const decision = evaluate({
       event,
-      rules: listRules(),
+      rules: await listRules(),
       profiles,
       settings,
       recent: f.get("simulateRecent") === "on" ? [{ channel: "push", dedupKey: [category, event.cameraId ?? "-", profileId ?? "-"].join("|"), createdAt: now - 60_000 }] : [],
@@ -291,10 +291,10 @@ export async function previewRulesAction(_p: ActionResult | null, form: FormData
 // ---------- Settings ----------
 
 export async function saveNotificationSettingsAction(_p: ActionResult | null, form: FormData) {
-  return guarded("settings:manage", form, (user, f) => {
+  return guarded("settings:manage", form, async (user, f) => {
     const tz = str(f, "timezone");
     if (!isValidTimeZone(tz)) return fail("Unknown time zone.");
-    const next = updateSettings({
+    const next = await updateSettings({
       timezone: tz,
       quietHours: { enabled: f.get("quietEnabled") === "on", start: str(f, "quietStart") || "22:30", end: str(f, "quietEnd") || "06:30" },
       dedupWindowMinutes: Number(str(f, "dedupWindowMinutes")),
@@ -312,17 +312,17 @@ export async function saveNotificationSettingsAction(_p: ActionResult | null, fo
         emergency: "push",
       },
     });
-    audit(user.id, "settings.notifications_updated", null, { quietHours: next.quietHours, dedup: next.dedupWindowMinutes, cooldown: next.cooldown });
+    await audit(user.id, "settings.notifications_updated", null, { quietHours: next.quietHours, dedup: next.dedupWindowMinutes, cooldown: next.cooldown });
     revalidatePath("/", "layout");
     return ok("Notification settings saved.");
   });
 }
 
 export async function saveRetentionAction(_p: ActionResult | null, form: FormData) {
-  return guarded("data:delete", form, (user, f) => {
-    const next = updateSettings({ retentionDays: Number(str(f, "retentionDays")), auditRetentionDays: Number(str(f, "auditRetentionDays")) });
-    audit(user.id, "settings.retention_updated", null, { retentionDays: next.retentionDays, auditRetentionDays: next.auditRetentionDays });
-    const r = applyRetention(Date.now(), user.id);
+  return guarded("data:delete", form, async (user, f) => {
+    const next = await updateSettings({ retentionDays: Number(str(f, "retentionDays")), auditRetentionDays: Number(str(f, "auditRetentionDays")) });
+    await audit(user.id, "settings.retention_updated", null, { retentionDays: next.retentionDays, auditRetentionDays: next.auditRetentionDays });
+    const r = await applyRetention(Date.now(), user.id);
     revalidatePath("/", "layout");
     return ok(`Retention saved. Removed ${r.events} expired event${r.events === 1 ? "" : "s"}.`);
   });
@@ -332,11 +332,11 @@ export async function setDemoEnabledAction(_p: ActionResult | null, form: FormDa
   return guarded("settings:manage", form, async (user, f) => {
     const enabled = f.get("demoEnabled") === "on";
     const hide = f.get("hideDemoData") === "on";
-    const before = getSettings();
-    updateSettings({ demoEnabled: enabled, hideDemoData: hide });
-    if (!enabled && before.demoEnabled) deleteAllDemoData(user.id);
+    const before = await getSettings();
+    await updateSettings({ demoEnabled: enabled, hideDemoData: hide });
+    if (!enabled && before.demoEnabled) await deleteAllDemoData(user.id);
     if (enabled && !before.demoEnabled) await seedDemo(user.id);
-    audit(user.id, "settings.demo_updated", null, { demoEnabled: enabled, hideDemoData: hide });
+    await audit(user.id, "settings.demo_updated", null, { demoEnabled: enabled, hideDemoData: hide });
     revalidatePath("/", "layout");
     return ok(enabled ? "Demo data is on." : "Demo data turned off and removed.");
   });
@@ -344,7 +344,7 @@ export async function setDemoEnabledAction(_p: ActionResult | null, form: FormDa
 
 export async function resetDemoAction(_p: ActionResult | null, form: FormData) {
   return guarded("settings:manage", form, async (user) => {
-    if (!getSettings().demoEnabled) return fail("Demo data is off.");
+    if (!(await getSettings()).demoEnabled) return fail("Demo data is off.");
     await resetDemo(user.id);
     revalidatePath("/", "layout");
     return ok("Demo data reset to the original samples.");
@@ -352,16 +352,16 @@ export async function resetDemoAction(_p: ActionResult | null, form: FormData) {
 }
 
 export async function deleteDataAction(_p: ActionResult | null, form: FormData) {
-  return guarded("data:delete", form, (user, f) => {
+  return guarded("data:delete", form, async (user, f) => {
     const what = str(f, "what");
     if (what === "events") {
-      const n = deleteEventHistory(user.id);
+      const n = await deleteEventHistory(user.id);
       revalidatePath("/", "layout");
       return ok(`Deleted ${n} events and their notifications.`);
     }
     if (what === "everything") {
       if (str(f, "confirmText") !== "DELETE") return fail('Type DELETE to confirm.');
-      deleteEverything(user.id);
+      await deleteEverything(user.id);
       revalidatePath("/", "layout");
       return ok("All household data, settings and Ring tokens were deleted.");
     }
@@ -372,26 +372,26 @@ export async function deleteDataAction(_p: ActionResult | null, form: FormData) 
 // ---------- Members ----------
 
 export async function addMemberAction(_p: ActionResult | null, form: FormData) {
-  return guarded("members:manage", form, (user, f) => {
+  return guarded("members:manage", form, async (user, f) => {
     const role = str(f, "role") === "owner" ? "owner" : "member";
-    const created = createUser(str(f, "email"), str(f, "password"), role);
-    audit(user.id, "member.added", created.id, { role });
+    const created = await createUser(str(f, "email"), str(f, "password"), role);
+    await audit(user.id, "member.added", created.id, { role });
     revalidatePath("/settings");
     return ok(`Added ${created.email} as ${role}. Share the temporary password with them privately.`);
   });
 }
 
 export async function removeMemberAction(_p: ActionResult | null, form: FormData) {
-  return guarded("members:manage", form, (user, f) => {
+  return guarded("members:manage", form, async (user, f) => {
     const id = str(f, "id");
     if (id === user.id) return fail("You can't remove yourself.");
-    const users = listUsers();
+    const users = await listUsers();
     const target = users.find((u) => u.id === id);
     if (!target) return fail("Account not found.");
     if (target.role === "owner" && users.filter((u) => u.role === "owner").length <= 1) return fail("Keep at least one owner.");
-    revokeUserSessions(id);
-    deleteUser(id);
-    audit(user.id, "member.removed", id);
+    await revokeUserSessions(id);
+    await deleteUser(id);
+    await audit(user.id, "member.removed", id);
     revalidatePath("/settings");
     return ok("Account removed and signed out.");
   });

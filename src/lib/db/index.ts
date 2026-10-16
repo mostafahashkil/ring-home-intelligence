@@ -1,50 +1,58 @@
-import Database from "better-sqlite3";
-import fs from "node:fs";
+/**
+ * Database access. Two backends behind one async interface:
+ *  - Postgres (Netlify Database) when deployed — NETLIFY_DB_URL is set by the platform.
+ *  - SQLite (better-sqlite3) for local development and tests (DATABASE_PATH, default ./data/rhi.db).
+ * SQL is written once with `?` (positional) or `@name` (named) placeholders and rewritten for Postgres.
+ * Transactions propagate through AsyncLocalStorage: repo functions calling getDb() inside
+ * `transaction()` automatically join it.
+ */
 import path from "node:path";
-import { MIGRATIONS } from "./migrations";
+import { Db, OpenedDb, txStore } from "./core";
+import { openPostgres } from "./postgres";
+import { openSqlite } from "./sqlite";
 
-export type DB = Database.Database;
+export type { Db, Params, Row } from "./core";
 
-const globalForDb = globalThis as unknown as { __rhiDb?: DB };
+const globalForDb = globalThis as unknown as { __rhiDb?: Promise<Db> };
 
 export function defaultDbPath(): string {
   return process.env.DATABASE_PATH || path.join(process.cwd(), "data", "rhi.db");
 }
 
-export function openDb(file: string): DB {
-  if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true });
-  const db = new Database(file);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  db.pragma("busy_timeout = 5000");
-  migrate(db);
+function postgresUrl(): string | null {
+  return process.env.NETLIFY_DB_URL || null;
+}
+
+/** Opens a database and applies pending migrations. `file` selects SQLite; omit it to auto-detect. */
+export async function openDb(file?: string): Promise<OpenedDb> {
+  const url = file === undefined ? postgresUrl() : null;
+  const db = url ? await openPostgres() : openSqlite(file ?? defaultDbPath());
+  await db.migrate();
   return db;
 }
 
-export function migrate(db: DB): number[] {
-  db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)");
-  const applied = new Set(db.prepare("SELECT id FROM schema_migrations").all().map((r) => (r as { id: number }).id));
-  const ran: number[] = [];
-  for (const m of MIGRATIONS) {
-    if (applied.has(m.id)) continue;
-    db.transaction(() => {
-      db.exec(m.sql);
-      db.prepare("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(m.id, m.name, Date.now());
-    })();
-    ran.push(m.id);
+/** Process-wide connection (survives Next.js dev hot reloads); the active transaction when inside one. */
+export async function getDb(): Promise<Db> {
+  const tx = txStore.getStore();
+  if (tx) return tx;
+  if (!globalForDb.__rhiDb) {
+    globalForDb.__rhiDb = openDb().catch((err) => {
+      globalForDb.__rhiDb = undefined;
+      throw err;
+    });
   }
-  return ran;
-}
-
-/** Process-wide connection (survives Next.js dev hot reloads). */
-export function getDb(): DB {
-  if (!globalForDb.__rhiDb) globalForDb.__rhiDb = openDb(defaultDbPath());
   return globalForDb.__rhiDb;
 }
 
+/** Runs `fn` atomically; nested calls join the outer transaction. */
+export async function transaction<T>(fn: () => Promise<T>): Promise<T> {
+  if (txStore.getStore()) return fn();
+  return (await getDb()).transaction(fn);
+}
+
 /** Tests swap in an in-memory database. */
-export function setDbForTesting(db: DB | undefined) {
-  globalForDb.__rhiDb = db;
+export function setDbForTesting(db: Db | undefined) {
+  globalForDb.__rhiDb = db ? Promise.resolve(db) : undefined;
 }
 
 export const json = {

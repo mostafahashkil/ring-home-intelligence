@@ -11,8 +11,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   try {
     const user = await requirePermission("integrations:manage");
-    const url = beginOAuth(user.id);
-    audit(user.id, "integration.ring_link_started");
+    const url = await beginOAuth(user.id);
+    await audit(user.id, "integration.ring_link_started");
     return NextResponse.redirect(url);
   } catch (err) {
     const back = new URL("/settings", req.url);

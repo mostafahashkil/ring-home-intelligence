@@ -40,8 +40,8 @@ function mockFetch(routes: Record<string, Route | Route[]>) {
 
 const noSleep = () => Promise.resolve();
 
-beforeEach(() => {
-  freshDb();
+beforeEach(async () => {
+  await freshDb();
   process.env.RING_CLIENT_ID = "client";
   process.env.RING_CLIENT_SECRET = "secret";
   delete process.env.RING_ACCESS_TOKEN;
@@ -90,36 +90,36 @@ describe("RingClient", () => {
 });
 
 describe("Ring token handling", () => {
-  it("stores tokens encrypted, never in plaintext", () => {
-    saveCredentials({ accountId: null, accessToken: "access-123", refreshToken: "refresh-456", accessExpiresAt: Date.now() + 3_600_000, status: "connected", source: "oauth" });
-    const row = getDb().prepare("SELECT * FROM ring_credentials").get() as Record<string, string>;
+  it("stores tokens encrypted, never in plaintext", async () => {
+    await saveCredentials({ accountId: null, accessToken: "access-123", refreshToken: "refresh-456", accessExpiresAt: Date.now() + 3_600_000, status: "connected", source: "oauth" });
+    const row = (await (await getDb()).get<Record<string, string>>("SELECT * FROM ring_credentials"))!;
     expect(JSON.stringify(row)).not.toContain("access-123");
     expect(JSON.stringify(row)).not.toContain("refresh-456");
-    expect(loadCredentials()?.accessToken).toBe("access-123");
+    expect((await loadCredentials())?.accessToken).toBe("access-123");
   });
 
   it("refreshes an expiring token and stores the rotated refresh token", async () => {
-    saveCredentials({ accountId: null, accessToken: "old", refreshToken: "r1", accessExpiresAt: Date.now() + 10_000, status: "connected", source: "oauth" });
+    await saveCredentials({ accountId: null, accessToken: "old", refreshToken: "r1", accessExpiresAt: Date.now() + 10_000, status: "connected", source: "oauth" });
     const { fetch, calls } = mockFetch({ "POST /oauth/token": () => json({ access_token: "a2", refresh_token: "r2", expires_in: 14400, token_type: "Bearer" }) });
     expect(await getAccessToken(fetch)).toBe("a2");
     const body = new URLSearchParams(calls[0]!.init!.body as string);
     expect(body.get("grant_type")).toBe("refresh_token");
     expect(body.get("refresh_token")).toBe("r1");
-    expect(loadCredentials()?.refreshToken).toBe("r2");
+    expect((await loadCredentials())?.refreshToken).toBe("r2");
   });
 
   it("marks the integration expired when refresh is rejected", async () => {
-    saveCredentials({ accountId: null, accessToken: null, refreshToken: "bad", accessExpiresAt: null, status: "connected", source: "oauth" });
+    await saveCredentials({ accountId: null, accessToken: null, refreshToken: "bad", accessExpiresAt: null, status: "connected", source: "oauth" });
     const { fetch } = mockFetch({ "POST /oauth/token": () => json({ error: "invalid_grant" }, 400) });
     await expect(refreshTokens(fetch)).rejects.toMatchObject({ reason: "expired" });
-    expect(loadCredentials()?.status).toBe("auth_expired");
+    expect((await loadCredentials())?.status).toBe("auth_expired");
     await expect(getAccessToken(fetch)).rejects.toMatchObject({ reason: "expired" });
   });
 
   it("runs the PKCE flow with single-use, user-bound state", async () => {
     process.env.RING_OAUTH_REDIRECT_URI = "https://app.example.com/api/ring/oauth/callback";
-    getDb().prepare("INSERT INTO users (id, email, password_hash, role, created_at) VALUES ('u1','o@example.com','x','owner',0)").run();
-    const url = new URL(beginOAuth("u1"));
+    await (await getDb()).run("INSERT INTO users (id, email, password_hash, role, created_at) VALUES ('u1','o@example.com','x','owner',0)");
+    const url = new URL(await beginOAuth("u1"));
     expect(url.origin + url.pathname).toBe("https://account.ring.com/account/integrations/partner-link/authorize");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("scope")).toBe("ava.v1:read");
@@ -128,12 +128,12 @@ describe("Ring token handling", () => {
     await expect(completeOAuth({ state, code: "c", userId: "someone-else" }, fetch)).rejects.toThrow(/expired or didn't match/);
     // The state was consumed by the failed attempt.
     await expect(completeOAuth({ state, code: "c", userId: "u1" }, fetch)).rejects.toThrow();
-    const url2 = new URL(beginOAuth("u1"));
+    const url2 = new URL(await beginOAuth("u1"));
     await completeOAuth({ state: url2.searchParams.get("state")!, code: "c", userId: "u1" }, fetch);
     const body = new URLSearchParams(calls[0]!.init!.body as string);
     expect(body.get("grant_type")).toBe("authorization_code");
     expect(body.get("code_verifier")).toBeTruthy();
-    expect(loadCredentials()?.source).toBe("oauth");
+    expect((await loadCredentials())?.source).toBe("oauth");
     delete process.env.RING_OAUTH_REDIRECT_URI;
   });
 });
@@ -151,7 +151,7 @@ describe("RingProvider.sync + pipeline", () => {
   };
 
   it("discovers cameras and imports history quietly, with sub-types and durations", async () => {
-    saveCredentials({ accountId: "acct", accessToken: "a", refreshToken: "r", accessExpiresAt: Date.now() + 3_600_000, status: "connected", source: "oauth" });
+    await saveCredentials({ accountId: "acct", accessToken: "a", refreshToken: "r", accessExpiresAt: Date.now() + 3_600_000, status: "connected", source: "oauth" });
     const { fetch } = mockFetch({
       "GET /v1/devices": () => json({ data: [{ id: "dev1", type: "devices", attributes: { name: "Front Door" } }, { id: "chime", type: "devices", attributes: { name: "Upstairs" } }] }),
       "GET /v1/devices/dev1/status": () => json({ data: { attributes: { online: true } } }),
@@ -165,22 +165,22 @@ describe("RingProvider.sync + pipeline", () => {
     expect(cameras.map((c) => [c.name, c.status, c.supportsClips])).toEqual([["Front Door", "online", true], ["Upstairs", "offline", false]]);
     expect(events.map((e) => [e.kind, e.subType ?? null])).toEqual([["motion", "human"], ["doorbell", null]]);
 
-    for (const c of cameras) upsertCamera({ ...c, provider: "ring", demo: false });
+    for (const c of cameras) await upsertCamera({ ...c, provider: "ring", demo: false });
     for (const e of events) await ingest(e);
-    const stored = listEvents().events;
+    const stored = (await listEvents()).events;
     // 2 imported events + 1 derived "prolonged activity" (the person event lasted 4 min > 3 min threshold).
     expect(stored.map((e) => e.eventType).sort()).toEqual(["behavior", "doorbell", "visitor"]);
     // Imported history (older than 15 min) never pushes.
     expect(stored.every((e) => e.decision?.channel === "quiet_log")).toBe(true);
-    expect(provider.connection().state).toBe("connected");
+    expect((await provider.connection()).state).toBe("connected");
   });
 
   it("records a sync error and reports it in the connection state", async () => {
-    saveCredentials({ accountId: "acct", accessToken: "a", refreshToken: "r", accessExpiresAt: Date.now() + 3_600_000, status: "connected", source: "oauth" });
+    await saveCredentials({ accountId: "acct", accessToken: "a", refreshToken: "r", accessExpiresAt: Date.now() + 3_600_000, status: "connected", source: "oauth" });
     const { fetch } = mockFetch({ "GET /v1/devices": () => json({}, 403) });
     const provider = new RingProvider(fetch);
     await expect(provider.sync()).rejects.toBeInstanceOf(RingApiError);
-    expect(provider.connection()).toMatchObject({ state: "error", message: expect.stringMatching(/isn't authorized/) });
+    expect(await provider.connection()).toMatchObject({ state: "error", message: expect.stringMatching(/isn't authorized/) });
   });
 
   it("merges a webhook event and its history record instead of duplicating", async () => {
@@ -188,10 +188,10 @@ describe("RingProvider.sync + pipeline", () => {
     await ingest({ provider: "ring", providerEventId: "dev1_motion_" + ts, timestamp: ts, providerDeviceId: "dev1", kind: "motion", subType: "human", componentIds: ["1"], demo: false });
     const r = await ingest({ provider: "ring", providerEventId: "history:h9", timestamp: ts + 800, endTimestamp: ts + 60_000, providerDeviceId: "dev1", kind: "motion", subType: "human", demo: false });
     expect(r.status).toBe("merged");
-    const stored = listEvents().events;
+    const stored = (await listEvents()).events;
     expect(stored).toHaveLength(1);
     expect(stored[0]!.endTimestamp).toBe(ts + 60_000);
     expect(stored[0]!.evidenceReference).toMatchObject({ kind: "ring_recording", durationMs: 60_000, componentId: "1" });
-    expect(listCameras()).toHaveLength(1);
+    expect(await listCameras()).toHaveLength(1);
   });
 });
