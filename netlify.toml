@@ -8,3 +8,6 @@
 [functions]
   # Native module must be shipped as-is rather than bundled.
   external_node_modules = ["better-sqlite3"]
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
