@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+coverage/
+data/*.db
+data/*.db-*
+data/*.key
+.env
+.env.local
+.env.*.local
+*.log
+next-env.d.ts
+*.tsbuildinfo
+.netlify/

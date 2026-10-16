@@ -1,0 +1,206 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Themes are token sets (RGB triplets so Tailwind alpha modifiers work).
+ *   <html data-palette="calm|sky" data-mode="system|light|dark">
+ * Calm: neutral green-gray (default). Sky: bright, airy blue-and-white home-security look.
+ * Neither copies any company's logo or wordmark.
+ */
+
+/* ---------- Calm (default) · light ---------- */
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --canvas: 246 247 245;
+  --chrome: 246 247 245;
+  --surface: 255 255 255;
+  --sunken: 238 240 237;
+  --line: 222 226 221;
+  --ink: 28 33 31;
+  --muted: 92 102 98;
+  --accent: 28 110 98;
+  --accent-ink: 255 255 255;
+  --ok: 34 120 74;
+  --warn: 160 98 10;
+  --danger: 178 48 48;
+  --info: 46 96 160;
+  --demo: 120 72 168;
+  --radius-card: 0.75rem;
+  --radius-control: 0.5rem;
+  --shadow-card: none;
+  --btn-case: none;
+  --btn-tracking: normal;
+  color-scheme: light;
+}
+
+/* ---------- Calm · dark ---------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-mode="light"]) {
+    --canvas: 20 23 22;
+    --chrome: 20 23 22;
+    --surface: 29 33 32;
+    --sunken: 24 27 26;
+    --line: 52 58 56;
+    --ink: 232 236 234;
+    --muted: 160 170 166;
+    --accent: 92 190 172;
+    --accent-ink: 12 30 27;
+    --ok: 108 200 140;
+    --warn: 230 170 80;
+    --danger: 240 120 120;
+    --info: 130 170 230;
+    --demo: 190 150 240;
+    color-scheme: dark;
+  }
+}
+:root[data-mode="dark"] {
+  --canvas: 20 23 22;
+  --chrome: 20 23 22;
+  --surface: 29 33 32;
+  --sunken: 24 27 26;
+  --line: 52 58 56;
+  --ink: 232 236 234;
+  --muted: 160 170 166;
+  --accent: 92 190 172;
+  --accent-ink: 12 30 27;
+  --ok: 108 200 140;
+  --warn: 230 170 80;
+  --danger: 240 120 120;
+  --info: 130 170 230;
+  --demo: 190 150 240;
+  color-scheme: dark;
+}
+
+/* ---------- Sky · light ---------- */
+:root[data-palette="sky"] {
+  --canvas: 244 246 248;
+  --chrome: 255 255 255;
+  --surface: 255 255 255;
+  --sunken: 238 242 246;
+  --line: 228 232 237;
+  --ink: 58 63 71;
+  --muted: 122 129 140;
+  --accent: 60 134 207;
+  --accent-ink: 255 255 255;
+  --ok: 64 150 72;
+  --warn: 196 120 0;
+  --danger: 200 50 44;
+  --info: 60 134 207;
+  --demo: 128 84 186;
+  --radius-card: 1rem;
+  --radius-control: 0.5rem;
+  --shadow-card: 0 1px 2px rgb(30 45 70 / 0.05), 0 2px 8px rgb(30 45 70 / 0.06);
+  --btn-case: uppercase;
+  --btn-tracking: 0.06em;
+  color-scheme: light;
+}
+
+/* ---------- Sky · dark ---------- */
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="sky"]:not([data-mode="light"]) {
+    --canvas: 16 21 28;
+    --chrome: 25 32 42;
+    --surface: 25 32 42;
+    --sunken: 20 26 35;
+    --line: 44 54 68;
+    --ink: 228 233 240;
+    --muted: 150 162 178;
+    --accent: 110 170 235;
+    --accent-ink: 10 24 40;
+    --ok: 110 200 120;
+    --warn: 240 180 80;
+    --danger: 245 115 108;
+    --info: 110 170 235;
+    --demo: 190 155 245;
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+    color-scheme: dark;
+  }
+}
+:root[data-palette="sky"][data-mode="dark"] {
+  --canvas: 16 21 28;
+  --chrome: 25 32 42;
+  --surface: 25 32 42;
+  --sunken: 20 26 35;
+  --line: 44 54 68;
+  --ink: 228 233 240;
+  --muted: 150 162 178;
+  --accent: 110 170 235;
+  --accent-ink: 10 24 40;
+  --ok: 110 200 120;
+  --warn: 240 180 80;
+  --danger: 245 115 108;
+  --info: 110 170 235;
+  --demo: 190 155 245;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: rgb(var(--canvas));
+  color: rgb(var(--ink));
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@layer components {
+  .card {
+    @apply border border-line bg-surface;
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+  .rounded-card {
+    border-radius: var(--radius-card);
+  }
+  .elevated {
+    box-shadow: var(--shadow-card);
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    border-radius: var(--radius-control);
+  }
+  .btn-primary {
+    @apply btn bg-accent text-accent-ink hover:opacity-90;
+    text-transform: var(--btn-case);
+    letter-spacing: var(--btn-tracking);
+  }
+  .btn-secondary {
+    @apply btn border border-line bg-surface text-ink hover:bg-sunken;
+  }
+  .btn-ghost {
+    @apply btn text-muted hover:bg-sunken hover:text-ink;
+  }
+  .btn-danger {
+    @apply btn border border-danger/40 bg-surface text-danger hover:bg-danger/10;
+  }
+  .input {
+    @apply w-full border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted/70 focus:border-accent focus:outline-none;
+    border-radius: var(--radius-control);
+  }
+  .label {
+    @apply mb-1 block text-sm font-medium text-ink;
+  }
+  .hint {
+    @apply mt-1 text-xs text-muted;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium;
+  }
+  .demo-stripe {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      rgb(var(--demo) / 0.07) 0 8px,
+      transparent 8px 16px
+    );
+  }
+}

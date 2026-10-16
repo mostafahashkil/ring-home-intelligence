@@ -1,0 +1,10 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[functions]
+  # Native module must be shipped as-is rather than bundled.
+  external_node_modules = ["better-sqlite3"]
